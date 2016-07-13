@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>PayPal CSV valuta convertor (by Jasny)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Bootstrap -->
+    <link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/jasny-bootstrap/3.1.2/css/jasny-bootstrap.min.css" rel="stylesheet">
+  </head>
+  <body>
+    <div class="container">
+        <div class="jumbotron">
+            <h1>PayPal CSV currency convertor</h1>
+        </div>
+
+        <form class="form-horizontal">
+          <div class="form-group">
+            <label for="currency" class="col-sm-2 control-label">Local currency</label>
+            <div class="col-sm-10">
+              <input type="text" class="form-control" id="currency" value="EUR" pattern="[A-Z]{3}" data-mask="aaa" required>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="csvfile" class="col-sm-2 control-label">CSV file</label>
+            <div class="col-sm-10">
+              <div class="fileinput fileinput-new input-group" data-provides="fileinput">
+                <div class="form-control" data-trigger="fileinput"><i class="glyphicon glyphicon-file fileinput-exists"></i> <span class="fileinput-filename"></span></div>
+                <span class="input-group-addon btn btn-default btn-file"><span>Select file</span><input type="file" id="csvfile" required></span>
+              </div>
+            </div>
+          </div>
+          <div class="form-group">
+            <div class="col-sm-offset-2 col-sm-10">
+              <button type="submit" class="btn btn-default">Convert</button>
+            </div>
+          </div>
+        </form>
+
+        <div class="small"><a href="http://www.jasny.net">Created by Jasny</a> | Available under the <a href="https://opensource.org/licenses/MIT">MIT license</a></div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/js/bootstrap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jasny-bootstrap/3.1.2/js/jasny-bootstrap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/money.js/0.2.0/money.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/4.1.2/papaparse.min.js"></script>
+
+    <script>
+        $(function() {
+            var locales = {
+                "nl": {
+                    "headers": {
+                        "date": "Datum",
+                        "time": " Tijd",
+                        "type": " Type",
+                        "status": " Status",
+                        "currency": " Valuta",
+                        "gross": " Bruto",
+                        "costs": " Kosten",
+                        "net": " Netto",
+                        "shipping": " Verzendbedrag",
+                        "insurance": " Verzekeringsbedrag",
+                        "tax": " BTW",
+                        "title": " Objecttitel"
+                    },
+                    "ignore_types": [
+                        "Omrekening van valuta's",
+                        "Geld toevoegen via bankrekening"
+                    ],
+                    "include_statuses": [
+                        "Voltooid"
+                    ]
+                }
+            };
+
+            $('#currency').on('change', function(e) {
+                $(this).val($(this).val().toUpperCase());
+            });
+
+            $('form').on('submit', function(e) {
+                e.preventDefault();
+
+                var lang = 'nl';
+                var currency = $('#currency').val();
+                var file = $('#csvfile')[0].files[0];
+    
+                Papa.parse(file, {
+                	header: true,
+                	complete: function(results) {
+                		process(results.data, currency, lang, function(data) {
+                            results.data = data;
+                            var convertedCSV = Papa.unparse(results);
+
+                            var newFileName = file.name.replace(/\.csv$/i, '-' + currency + '.csv');
+                            download(newFileName, convertedCSV);
+                        });
+	                }
+                });
+            });
+
+            function process(data, localCurrency, lang, callback)
+            {
+                var result = [];
+                var deferreds = [];
+
+                var headers = locales[lang].headers;
+                var ignoreTypes = locales[lang].ignore_types;
+                var includeStatuses = locales[lang].include_statuses;
+
+                data.forEach(function(row) {
+                    if (ignoreTypes.includes(row[headers.type]) || !includeStatuses.includes(row[headers.status])) {
+                        return;
+                    }
+
+                    if (row[headers.currency] === localCurrency) {
+                        result.push(row);
+                    } else {
+                        var i = result.push(null) - 1;
+
+                        var deferred = convertRowCurrency(row, headers, localCurrency).done(function(row) {
+                            result[i] = row;
+                        });
+
+                        deferreds.push(deferred);
+                    }
+                });
+
+                $.when.apply($, deferreds).done(function() {
+                    callback(result);
+                });
+            }
+
+            function convertRowCurrency(row, headers, localCurrency)
+            {
+                var date = toIsoDate(row[headers.date]);
+                var currency = toIsoDate(row[headers.currency]);
+
+                var deferred = $.Deferred();
+
+                $.getJSON("http://api.fixer.io/" + date + "?base=" + localCurrency + '&symbols=' + currency).done(function(data) {
+                    fx.base = localCurrency;
+                    fx.rates = data.rates;
+
+                    row[headers.currency] = localCurrency;
+                    row[headers.title] = (row[headers.title] ? row[headers.title] + ' ' : '') + '(' + row[headers.gross].replace(/^\-/, '') + ' ' + currency + ')';
+
+                    row[headers.gross] = convertCurrency(fx, row[headers.gross], currency, localCurrency);
+                    row[headers.costs] = convertCurrency(fx, row[headers.costs], currency, localCurrency);
+                    row[headers.net] = convertCurrency(fx, row[headers.net], currency, localCurrency);
+                    row[headers.shipping] = convertCurrency(fx, row[headers.shipping], currency, localCurrency);
+                    row[headers.insurance] = convertCurrency(fx, row[headers.insurance], currency, localCurrency);
+                    row[headers.tax] = convertCurrency(fx, row[headers.tax], currency, localCurrency);
+
+                    deferred.resolve(row);
+                });
+
+                return deferred;
+            }
+
+            function convertCurrency(fx, input, currency, localCurrency)
+            {
+                var amount = parseFloat(input.replace(',', '.'));
+                var localAmount = fx(amount).from(currency).to(localCurrency);
+
+                return localAmount.toFixed(2).replace('.', ',');
+            }
+
+            function toIsoDate(date) {
+                return date.replace(/^(\d+)-(\d+)-(\d+)$/, function(match, day, month, year) {
+                    var padDay = String("00" + day).slice(-2);
+                    var padMonth = String("00" + month).slice(-2);
+                    return year + '-' + padMonth + '-' + padDay;
+                });
+            }
+
+            function download(filename, text) {
+                var element = document.createElement('a');
+                element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
+                element.setAttribute('download', filename);
+
+                element.style.display = 'none';
+                document.body.appendChild(element);
+
+                element.click();
+
+                document.body.removeChild(element);
+            }
+        });
+    </script>
+  </body>
+</html>
+
