@@ -67,10 +67,8 @@
                     },
                     "ignore_types": [
                         "Currency Conversion",
-                        "Add Funds from a Bank Account"
-                    ],
-                    "include_statuses": [
-                        "Voltooid"
+                        "Add Funds from a Bank Account",
+                        "Temporary Hold"
                     ],
                     "date_format": "MM/DD/YYYY",
                     "toFloat": parseFloat,
@@ -96,10 +94,8 @@
                     },
                     "ignore_types": [
                         "Omrekening van valuta's",
-                        "Geld toevoegen via bankrekening"
-                    ],
-                    "include_statuses": [
-                        "Voltooid"
+                        "Geld toevoegen via bankrekening",
+                        "Tijdelijk blokkeren"
                     ],
                     "date_format": "DD-MM-YYYY",
                     "toFloat": function(amount) {
@@ -164,7 +160,7 @@
                 var includeStatuses = locale.include_statuses;
 
                 data.forEach(function(row) {
-                    if (ignoreTypes.includes(row[headers.type]) || !includeStatuses.includes(row[headers.status])) {
+                    if (ignoreTypes.includes(row[headers.type])) {
                         return;
                     }
 
