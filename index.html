@@ -44,11 +44,42 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jasny-bootstrap/3.1.2/js/jasny-bootstrap.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/money.js/0.2.0/money.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/4.1.2/papaparse.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.14.1/moment.min.js"></script>
 
     <script>
         $(function() {
-            var locales = {
-                "nl": {
+            var locales = [
+                {
+                    "lang": "en",
+                    "headers": {
+                        "date": "Date",
+                        "time": " Time",
+                        "type": " Type",
+                        "status": " Status",
+                        "currency": " Currency",
+                        "gross": " Gross",
+                        "fee": " Fee",
+                        "net": " Net",
+                        "shipping": " Shipping and Handling Amount",
+                        "insurance": " Insurance Amount",
+                        "tax": "  Sales Tax",
+                        "title": " Item Title"
+                    },
+                    "ignore_types": [
+                        "Currency Conversion",
+                        "Add Funds from a Bank Account"
+                    ],
+                    "include_statuses": [
+                        "Voltooid"
+                    ],
+                    "date_format": "MM/DD/YYYY",
+                    "toFloat": parseFloat,
+                    "toLocaleFixed": function(amount, digits) {
+                        return amount.toFixed(digits);
+                    }
+                },
+                {
+                    "lang": "nl",
                     "headers": {
                         "date": "Datum",
                         "time": " Tijd",
@@ -56,7 +87,7 @@
                         "status": " Status",
                         "currency": " Valuta",
                         "gross": " Bruto",
-                        "costs": " Kosten",
+                        "fee": " Kosten",
                         "net": " Netto",
                         "shipping": " Verzendbedrag",
                         "insurance": " Verzekeringsbedrag",
@@ -69,9 +100,18 @@
                     ],
                     "include_statuses": [
                         "Voltooid"
-                    ]
+                    ],
+                    "date_format": "DD-MM-YYYY",
+                    "toFloat": function(amount) {
+                        return parseFloat(amount.replace('.', '').replace(',', '.'));
+                    },
+                    "toLocaleFixed": function(amount, digits) {
+                        return amount.toFixed(digits).replace('.', ',');
+                    }
                 }
-            };
+            ];
+
+            var locale = null;
 
             $('#currency').on('change', function(e) {
                 $(this).val($(this).val().toUpperCase());
@@ -80,14 +120,21 @@
             $('form').on('submit', function(e) {
                 e.preventDefault();
 
-                var lang = 'nl';
                 var currency = $('#currency').val();
                 var file = $('#csvfile')[0].files[0];
     
                 Papa.parse(file, {
                 	header: true,
                 	complete: function(results) {
-                		process(results.data, currency, lang, function(data) {
+                        locale = detectLocale(Object.keys(results.data[0]));
+                        moment.locale(locale.lang);
+
+                        if (!locale) {
+                            alert("Sorry, I don't recognize the headers of this CSV. Maybe it's in a language I don't know.");
+                            return;
+                        }
+
+                		process(results.data, currency, function(data) {
                             results.data = data;
                             var convertedCSV = Papa.unparse(results);
 
@@ -98,14 +145,23 @@
                 });
             });
 
-            function process(data, localCurrency, lang, callback)
+            function detectLocale(headers)
+            {
+                for (var i = 0; i < locales.length; i++) {
+                    if (locales[i].headers.date === headers[0]) return locales[i];
+                }
+
+                return null; // not found
+            }
+
+            function process(data, localCurrency, callback)
             {
                 var result = [];
                 var deferreds = [];
 
-                var headers = locales[lang].headers;
-                var ignoreTypes = locales[lang].ignore_types;
-                var includeStatuses = locales[lang].include_statuses;
+                var headers = locale.headers;
+                var ignoreTypes = locale.ignore_types;
+                var includeStatuses = locale.include_statuses;
 
                 data.forEach(function(row) {
                     if (ignoreTypes.includes(row[headers.type]) || !includeStatuses.includes(row[headers.status])) {
@@ -117,7 +173,7 @@
                     } else {
                         var i = result.push(null) - 1;
 
-                        var deferred = convertRowCurrency(row, headers, localCurrency).done(function(row) {
+                        var deferred = convertRowCurrency(row, localCurrency).done(function(row) {
                             result[i] = row;
                         });
 
@@ -130,10 +186,11 @@
                 });
             }
 
-            function convertRowCurrency(row, headers, localCurrency)
+            function convertRowCurrency(row, localCurrency)
             {
-                var date = toIsoDate(row[headers.date]);
-                var currency = toIsoDate(row[headers.currency]);
+                var headers = locale.headers;
+                var date = moment(row[headers.date], locale.date_format).format('YYYY-MM-DD');
+                var currency = row[headers.currency];
 
                 var deferred = $.Deferred();
 
@@ -145,7 +202,7 @@
                     row[headers.title] = (row[headers.title] ? row[headers.title] + ' ' : '') + '(' + row[headers.gross].replace(/^\-/, '') + ' ' + currency + ')';
 
                     row[headers.gross] = convertCurrency(fx, row[headers.gross], currency, localCurrency);
-                    row[headers.costs] = convertCurrency(fx, row[headers.costs], currency, localCurrency);
+                    row[headers.fee] = convertCurrency(fx, row[headers.fee], currency, localCurrency);
                     row[headers.net] = convertCurrency(fx, row[headers.net], currency, localCurrency);
                     row[headers.shipping] = convertCurrency(fx, row[headers.shipping], currency, localCurrency);
                     row[headers.insurance] = convertCurrency(fx, row[headers.insurance], currency, localCurrency);
@@ -159,18 +216,10 @@
 
             function convertCurrency(fx, input, currency, localCurrency)
             {
-                var amount = parseFloat(input.replace(',', '.'));
+                var amount = locale.toFloat(input);
                 var localAmount = fx(amount).from(currency).to(localCurrency);
 
-                return localAmount.toFixed(2).replace('.', ',');
-            }
-
-            function toIsoDate(date) {
-                return date.replace(/^(\d+)-(\d+)-(\d+)$/, function(match, day, month, year) {
-                    var padDay = String("00" + day).slice(-2);
-                    var padMonth = String("00" + month).slice(-2);
-                    return year + '-' + padMonth + '-' + padDay;
-                });
+                return locale.toLocaleFixed(localAmount, 2);
             }
 
             function download(filename, text) {

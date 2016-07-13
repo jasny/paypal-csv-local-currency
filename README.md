@@ -7,10 +7,8 @@ This means the amounts will not exactly match those on your bankaccount/creditca
 the difference as currency exchange costs.
 
 This is an all in one HTML/JavaScript solution. You can simply download and use it without worrying about
-installation or you can use it online:
+installation. Alternatively you can use it online:
 
 > [http://www.jasny.net/paypal-csv-local-currency](http://www.jasny.net/paypal-csv-local-currency)
 
-_Note: Currently only the Dutch export is supported. English can be
-[added upon request](https://github.com/jasny/paypal-csv-local-currency/issues). For other languages, please
-submit a PR._
+_Only English and Dutch exports are supported. For other languages, please submit a pull request._
