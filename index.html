@@ -7,7 +7,7 @@
     <link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/jasny-bootstrap/3.1.2/css/jasny-bootstrap.min.css" rel="stylesheet">
   </head>
-  <body>
+  <body style="padding-top: 30px">
     <div class="container">
         <div class="jumbotron">
             <h1>PayPal CSV currency convertor</h1>
@@ -30,8 +30,13 @@
             </div>
           </div>
           <div class="form-group">
-            <div class="col-sm-offset-2 col-sm-10">
-              <button type="submit" class="btn btn-default">Convert</button>
+              <div class="col-sm-10 col-sm-offset-2">
+                <label><input type="checkbox" id="exchange-rate-day" value="first-of-month" checked> Use exchange rate of the first day of the month</label>
+              </div>
+          </div>
+          <div class="form-group">
+            <div class="col-sm-offset-2 col-sm-10 text-right">
+              <button type="submit" class="btn btn-primary btn-lg">Convert</button>
             </div>
           </div>
         </form>
@@ -54,6 +59,7 @@
                     "headers": {
                         "date": "Date",
                         "time": " Time",
+                        "name": " Name",
                         "type": " Type",
                         "status": " Status",
                         "currency": " Currency",
@@ -66,10 +72,10 @@
                         "title": " Item Title"
                     },
                     "ignore_types": [
-                        "Currency Conversion",
-                        "Add Funds from a Bank Account",
                         "Temporary Hold"
                     ],
+                    "conversion_type": "Currency Conversion",
+                    "conversion_delta_description": "Exchange difference with currency conversion",
                     "date_format": "MM/DD/YYYY",
                     "toFloat": parseFloat,
                     "toLocaleFixed": function(amount, digits) {
@@ -81,6 +87,7 @@
                     "headers": {
                         "date": "Datum",
                         "time": " Tijd",
+                        "name": " Naam",
                         "type": " Type",
                         "status": " Status",
                         "currency": " Valuta",
@@ -93,10 +100,10 @@
                         "title": " Objecttitel"
                     },
                     "ignore_types": [
-                        "Omrekening van valuta's",
-                        "Geld toevoegen via bankrekening",
                         "Tijdelijk blokkeren"
                     ],
+                    "conversion_type": "Omrekening van valuta's",
+                    "conversion_delta_description": "Koersverschil bij omrekening van valuta's",
                     "date_format": "DD-MM-YYYY",
                     "toFloat": function(amount) {
                         return parseFloat(amount.replace('.', '').replace(',', '.'));
@@ -108,6 +115,7 @@
             ];
 
             var locale = null;
+            var exchangeRateDay = 'default';
 
             $('#currency').on('change', function(e) {
                 $(this).val($(this).val().toUpperCase());
@@ -118,10 +126,11 @@
 
                 var currency = $('#currency').val();
                 var file = $('#csvfile')[0].files[0];
+                exchangeRateDay = $('#exchange-rate-day:checked').val() || 'default';
     
                 Papa.parse(file, {
-                	header: true,
-                	complete: function(results) {
+                    header: true,
+                    complete: function(results) {
                         locale = detectLocale(Object.keys(results.data[0]));
                         moment.locale(locale.lang);
 
@@ -130,14 +139,16 @@
                             return;
                         }
 
-                		process(results.data, currency, function(data) {
+                        process(results.data, currency).then(function(data) {
+                            return groupCurrencyConversion(data); 
+                        }).done(function(data) {
                             results.data = data;
                             var convertedCSV = Papa.unparse(results);
 
                             var newFileName = file.name.replace(/\.csv$/i, '-' + currency + '.csv');
                             download(newFileName, convertedCSV);
                         });
-	                }
+                    }
                 });
             });
 
@@ -150,17 +161,18 @@
                 return null; // not found
             }
 
-            function process(data, localCurrency, callback)
+            function process(data, localCurrency)
             {
                 var result = [];
                 var deferreds = [];
 
                 var headers = locale.headers;
                 var ignoreTypes = locale.ignore_types;
-                var includeStatuses = locale.include_statuses;
+
+                var grandDeferred = $.Deferred();
 
                 data.forEach(function(row) {
-                    if (ignoreTypes.includes(row[headers.type])) {
+                    if (ignoreTypes.includes(row[headers.type]) || !row[headers.gross]) {
                         return;
                     }
 
@@ -178,22 +190,24 @@
                 });
 
                 $.when.apply($, deferreds).done(function() {
-                    callback(result);
+                    grandDeferred.resolve(result);
                 });
+                
+                return grandDeferred;
             }
 
             function convertRowCurrency(row, localCurrency)
             {
                 var headers = locale.headers;
-                var date = moment(row[headers.date], locale.date_format).format('YYYY-MM-DD');
                 var currency = row[headers.currency];
+                
+                var momentDate = moment(row[headers.date], locale.date_format);
+                if (exchangeRateDay === 'first-of-month') momentDate.startOf('month');
+                var date = momentDate.format('YYYY-MM-DD');
 
                 var deferred = $.Deferred();
-
-                $.getJSON("http://api.fixer.io/" + date + "?base=" + localCurrency + '&symbols=' + currency).done(function(data) {
-                    fx.base = localCurrency;
-                    fx.rates = data.rates;
-
+                
+                setupFx(date, localCurrency, function(fx) {
                     row[headers.currency] = localCurrency;
                     row[headers.title] = (row[headers.title] ? row[headers.title] + ' ' : '') + '(' + row[headers.gross].replace(/^\-/, '') + ' ' + currency + ')';
 
@@ -209,15 +223,81 @@
 
                 return deferred;
             }
+            
+            function setupFx(date, localCurrency, callback)
+            {
+                if (fx.base === localCurrency && fx.date === date) {
+                    callback(fx);
+                } else {
+                    $.getJSON("http://api.fixer.io/" + date + "?base=" + localCurrency).done(function(data) {
+                        fx.date = date;
+                        fx.base = localCurrency;
+                        fx.rates = data.rates;
+
+                        callback(fx);
+                    });
+                }
+            }
 
             function convertCurrency(fx, input, currency, localCurrency)
             {
                 var amount = locale.toFloat(input);
+                if (!amount) return input;
+                
                 var localAmount = fx(amount).from(currency).to(localCurrency);
-
                 return locale.toLocaleFixed(localAmount, 2);
             }
+            
+            function groupCurrencyConversion(data)
+            {
+                var result = [];
+                var index = {};
 
+                var conversionType = locale.conversion_type;
+                var description = locale.conversion_delta_description;
+                var headers = locale.headers;
+
+                data.forEach(function(row) {
+                    if (row[headers.type] !== conversionType) {
+                        result.push(row);
+                        return;
+                    }
+
+                    var key = row[headers.date] + 'T' + row[headers.time];
+
+                    row[headers.type] = description;
+                    if (!row[headers.title]) {
+                        row[headers.title] = '(' + row[headers.gross].replace(/^\-/, '') + ' ' + row[headers.currency] + ')';
+                    }
+
+                    if (typeof index[key] === 'undefined') {
+                        index[key] = result.push(row) - 1;
+                    } else {
+                        var resultRow = result[index[key]];
+                        
+                        resultRow[headers.gross] = addAmounts(resultRow[headers.gross], row[headers.gross]);
+                        resultRow[headers.fee] = addAmounts(resultRow[headers.fee], row[headers.fee]);
+                        resultRow[headers.net] = addAmounts(resultRow[headers.net], row[headers.net]);
+                        
+                        resultRow[headers.name] = resultRow[headers.name] + ' ' + lcfirst(row[headers.name]);
+                        resultRow[headers.title] = (row[headers.title] + ' -> ' + resultRow[headers.title]).replace(/[\(\)]/g, '');
+                    }
+                });
+
+                return result;
+            }
+            
+            function addAmounts(amount1, amount2)
+            {
+                var sum = locale.toFloat(amount1) + locale.toFloat(amount2);
+                return locale.toLocaleFixed(sum, 2);
+            }
+            
+            function lcfirst(string)
+            {
+                return string.charAt(0).toLowerCase() + string.slice(1);                
+            }
+            
             function download(filename, text) {
                 var element = document.createElement('a');
                 element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
@@ -234,4 +314,3 @@
     </script>
   </body>
 </html>
-
