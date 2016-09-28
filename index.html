@@ -75,7 +75,7 @@
                         "Temporary Hold"
                     ],
                     "conversion_type": "Currency Conversion",
-                    "conversion_delta_description": "Exchange difference with currency conversion",
+                    "conversion_delta_description": "Costs and difference of currency conversion",
                     "date_format": "MM/DD/YYYY",
                     "toFloat": parseFloat,
                     "toLocaleFixed": function(amount, digits) {
@@ -102,8 +102,8 @@
                     "ignore_types": [
                         "Tijdelijk blokkeren"
                     ],
-                    "conversion_type": "Omrekening van valuta's",
-                    "conversion_delta_description": "Koersverschil bij omrekening van valuta's",
+                    "conversion_type": "Algemeen valutaomrekening",
+                    "conversion_delta_description": "Kosten en koersverschil bij valutaomrekening",
                     "date_format": "DD-MM-YYYY",
                     "toFloat": function(amount) {
                         return parseFloat(amount.replace('.', '').replace(',', '.'));
